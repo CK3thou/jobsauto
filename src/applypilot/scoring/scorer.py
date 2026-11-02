@@ -101,12 +101,17 @@ def score_job(resume_text: str, job: dict) -> dict:
         return {"score": 0, "keywords": "", "reasoning": f"LLM error: {e}"}
 
 
-def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
+def run_scoring(
+    limit: int = 0,
+    rescore: bool = False,
+    job_urls: list[str] | None = None,
+) -> dict:
     """Score unscored jobs that have full descriptions.
 
     Args:
         limit: Maximum number of jobs to score in this run.
         rescore: If True, re-score all jobs (not just unscored ones).
+        job_urls: Optional explicit allowlist of job URLs to score.
 
     Returns:
         {"scored": int, "errors": int, "elapsed": float, "distribution": list}
@@ -114,7 +119,21 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
-    if rescore:
+    if job_urls is not None:
+        if not job_urls:
+            jobs = []
+        else:
+            placeholders = ",".join("?" for _ in job_urls)
+            query = f"SELECT * FROM jobs WHERE full_description IS NOT NULL AND url IN ({placeholders})"
+            if not rescore:
+                query += " AND fit_score IS NULL"
+            query += " ORDER BY discovered_at DESC"
+            if limit > 0:
+                query += " LIMIT ?"
+                jobs = conn.execute(query, [*job_urls, limit]).fetchall()
+            else:
+                jobs = conn.execute(query, job_urls).fetchall()
+    elif rescore:
         query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
         if limit > 0:
             query += f" LIMIT {limit}"
@@ -146,20 +165,21 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
             errors += 1
 
         results.append(result)
+        conn.execute(
+            "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
+            (
+                result["score"],
+                f"{result['keywords']}\n{result['reasoning']}",
+                datetime.now(timezone.utc).isoformat(),
+                result["url"],
+            ),
+        )
+        conn.commit()
 
         log.info(
             "[%d/%d] score=%d  %s",
             completed, len(jobs), result["score"], job.get("title", "?")[:60],
         )
-
-    # Write scores to DB
-    now = datetime.now(timezone.utc).isoformat()
-    for r in results:
-        conn.execute(
-            "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
-            (r["score"], f"{r['keywords']}\n{r['reasoning']}", now, r["url"]),
-        )
-    conn.commit()
 
     elapsed = time.time() - t0
     log.info("Done: %d scored in %.1fs (%.1f jobs/sec)", len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0)

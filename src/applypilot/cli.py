@@ -333,6 +333,19 @@ def dashboard() -> None:
 
 
 @app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind (localhost only by default)."),
+    port: int = typer.Option(8765, "--port", help="Local web dashboard port."),
+) -> None:
+    """Run the live job dashboard in your browser."""
+    _bootstrap()
+
+    from applypilot.web import serve_dashboard
+
+    serve_dashboard(host=host, port=port)
+
+
+@app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil

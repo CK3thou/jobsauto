@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from jobspy import scrape_jobs
 
 from applypilot import config
+from applypilot.discovery.posting_dates import parse_posted_at
 from applypilot.database import get_connection, init_db, store_jobs
 
 log = logging.getLogger(__name__)
@@ -165,14 +166,15 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
 
         # Extract apply URL if JobSpy provided it
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
+        posted_at = parse_posted_at(row.get("date_posted"))
 
         try:
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, "
+                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, posted_at, "
                 "full_description, application_url, detail_scraped_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (url, title, salary, description, location_str, site_label, strategy, now,
-                 full_description, apply_url, detail_scraped_at),
+                 posted_at, full_description, apply_url, detail_scraped_at),
             )
             new += 1
         except sqlite3.IntegrityError:
@@ -463,7 +465,7 @@ def run_discovery(cfg: dict | None = None) -> dict:
     proxy = cfg.get("proxy")
     sites = cfg.get("sites")
     results_per_site = cfg.get("defaults", {}).get("results_per_site", 100)
-    hours_old = cfg.get("defaults", {}).get("hours_old", 72)
+    hours_old = min(cfg.get("defaults", {}).get("hours_old", 72), 72)
     tiers = cfg.get("tiers")
     locations = cfg.get("location_labels")
 

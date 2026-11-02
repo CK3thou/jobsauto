@@ -22,6 +22,7 @@ import yaml
 from applypilot import config
 from applypilot.config import CONFIG_DIR
 from applypilot.database import get_connection, init_db
+from applypilot.discovery.posting_dates import is_within_days, parse_posted_at
 
 log = logging.getLogger(__name__)
 
@@ -57,12 +58,12 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
 
     loc = location.lower()
 
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
     for r in reject:
         if r.lower() in loc:
             return False
+
+    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
+        return True
 
     for a in accept:
         if a.lower() in loc:
@@ -192,6 +193,7 @@ def search_employer(
     search_text: str,
     location_filter: bool = True,
     max_results: int = 0,
+    max_pages: int = 25,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
 ) -> list[dict]:
@@ -201,7 +203,6 @@ def search_employer(
     all_jobs: list[dict] = []
     offset = 0
     page_size = 20
-    max_pages = 25  # Cap at 500 results
     total = None
 
     while True:
@@ -221,6 +222,9 @@ def search_employer(
 
         for j in postings:
             loc = j.get("locationsText", "")
+            posted_at = parse_posted_at(j.get("postedOn"))
+            if not is_within_days(posted_at, days=3):
+                continue
             if location_filter and accept_locs is not None and reject_locs is not None:
                 if not _location_ok(loc, accept_locs, reject_locs):
                     continue
@@ -229,6 +233,7 @@ def search_employer(
                 "title": j.get("title", ""),
                 "location": loc,
                 "posted": j.get("postedOn", ""),
+                "posted_at": posted_at,
                 "external_path": j.get("externalPath", ""),
                 "employer_key": employer_key,
                 "employer_name": employer["name"],
@@ -327,14 +332,20 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, "
-                "discovered_at, full_description, application_url, detail_scraped_at, detail_error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "discovered_at, posted_at, full_description, application_url, detail_scraped_at, detail_error) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (url, job.get("title"), None, short_desc, job.get("location"),
-                 site, strategy, now, full_description, url, detail_scraped_at, detail_error),
+                 site, strategy, now, job.get("posted_at"), full_description, url,
+                 detail_scraped_at, detail_error),
             )
             new += 1
         except sqlite3.IntegrityError:
             existing += 1
+            if job.get("posted_at"):
+                conn.execute(
+                    "UPDATE jobs SET posted_at = ? WHERE url = ?",
+                    (job["posted_at"], url),
+                )
 
     conn.commit()
     return new, existing
@@ -347,6 +358,7 @@ def _process_one(
     location_filter: bool,
     accept_locs: list[str],
     reject_locs: list[str],
+    max_pages: int,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -355,6 +367,7 @@ def _process_one(
         jobs = search_employer(
             employer_key, emp, search_text,
             location_filter=location_filter,
+            max_pages=max_pages,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
         )
@@ -387,6 +400,7 @@ def scrape_employers(
     employers: dict,
     employer_keys: list[str] | None = None,
     location_filter: bool = True,
+    max_pages: int = 25,
     max_results: int = 0,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
@@ -423,7 +437,7 @@ def scrape_employers(
             futures = {
                 pool.submit(
                     _process_one, key, employers, search_text,
-                    location_filter, accept_locs, reject_locs,
+                    location_filter, accept_locs, reject_locs, max_pages,
                 ): key
                 for key in valid_keys
             }
@@ -446,7 +460,7 @@ def scrape_employers(
         for key in valid_keys:
             result = _process_one(
                 key, employers, search_text,
-                location_filter, accept_locs, reject_locs,
+                location_filter, accept_locs, reject_locs, max_pages,
             )
             completed += 1
             total_new += result["new"]
@@ -494,6 +508,21 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     queries_cfg = search_cfg.get("queries", [])
     accept_locs, reject_locs = _load_location_filter(search_cfg)
 
+    configured_employers = search_cfg.get("workday_employers")
+    if configured_employers:
+        if not isinstance(configured_employers, list) or not all(
+            isinstance(key, str) for key in configured_employers
+        ):
+            raise ValueError("workday_employers must be a list of employer keys.")
+        unknown = set(configured_employers) - employers.keys()
+        if unknown:
+            raise ValueError(f"Unknown Workday employer keys: {', '.join(sorted(unknown))}")
+        employers = {key: employers[key] for key in configured_employers}
+
+    max_pages = search_cfg.get("workday_max_pages", 25)
+    if not isinstance(max_pages, int) or max_pages < 1:
+        raise ValueError("workday_max_pages must be a positive integer.")
+
     # Default to tier 1-2 queries for workday scraping
     max_tier = search_cfg.get("workday_max_tier", 2)
     queries = [q["query"] for q in queries_cfg if q.get("tier", 99) <= max_tier]
@@ -512,7 +541,10 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
 
     location_filter = search_cfg.get("workday_location_filter", True)
 
-    log.info("Workday crawl: %d queries x %d employers (workers=%d)", len(queries), len(employers), workers)
+    log.info(
+        "Workday crawl: %d queries x %d employers, up to %d pages each (workers=%d)",
+        len(queries), len(employers), max_pages, workers,
+    )
 
     grand_new = 0
     grand_existing = 0
@@ -524,6 +556,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
             search_text=query,
             employers=employers,
             location_filter=location_filter,
+            max_pages=max_pages,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             workers=workers,

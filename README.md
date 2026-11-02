@@ -36,7 +36,10 @@ applypilot run -w 4      # same but parallel (4 threads for discovery/enrichment
 applypilot apply         # autonomous browser-driven submission
 applypilot apply -w 3    # parallel apply (3 Chrome instances)
 applypilot apply --dry-run  # fill forms without submitting
+applypilot web           # open the live job dashboard in your browser
 ```
+
+The live dashboard includes a local application-profile editor and job shortlist. It displays only jobs with a known posting date within the previous 72 hours; older or undated listings are hidden. Review your contact, work authorization, sponsorship, experience, skills, and resume facts there; mark roles as **Interested** and open the employer posting to decide what to pursue. Profile edits stay in `~/.applypilot/profile.json`. The dashboard does not submit applications.
 
 > **Why two install commands?** `python-jobspy` pins an exact numpy version in its metadata that conflicts with pip's resolver, but works fine at runtime with any modern numpy. The `--no-deps` flag bypasses the resolver; the second command installs jobspy's actual runtime dependencies. Everything except `python-jobspy` installs normally.
 

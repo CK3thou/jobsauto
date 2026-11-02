@@ -54,6 +54,13 @@ queries:
   - query: "security engineer"
     tier: 3
 
+# Optional Workday crawl controls. Omit workday_employers to search the full
+# registry, or provide employer keys from employers.yaml to narrow the crawl.
+# workday_employers:
+#   - cisco
+#   - adobe
+# workday_max_pages: 2  # 20 results per page; default is 25 (up to 500)
+
 # Locations to search
 locations:
   - location: "San Francisco, CA"

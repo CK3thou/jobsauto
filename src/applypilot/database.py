@@ -98,6 +98,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             site                  TEXT,
             strategy              TEXT,
             discovered_at         TEXT,
+            posted_at             TEXT,
 
             -- Enrichment stage (detail_scraper)
             full_description      TEXT,
@@ -123,7 +124,8 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             -- Application stage
             applied_at            TEXT,
             apply_status          TEXT,
-            apply_error           TEXT,
+            review_status          TEXT DEFAULT 'unreviewed',
+            apply_error            TEXT,
             apply_attempts        INTEGER DEFAULT 0,
             agent_id              TEXT,
             last_attempted_at     TEXT,
@@ -153,6 +155,7 @@ _ALL_COLUMNS: dict[str, str] = {
     "site": "TEXT",
     "strategy": "TEXT",
     "discovered_at": "TEXT",
+    "posted_at": "TEXT",
     # Enrichment
     "full_description": "TEXT",
     "application_url": "TEXT",
@@ -173,6 +176,7 @@ _ALL_COLUMNS: dict[str, str] = {
     # Application
     "applied_at": "TEXT",
     "apply_status": "TEXT",
+    "review_status": "TEXT DEFAULT 'unreviewed'",
     "apply_error": "TEXT",
     "apply_attempts": "INTEGER DEFAULT 0",
     "agent_id": "TEXT",
