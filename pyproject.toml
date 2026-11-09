@@ -35,9 +35,9 @@ dev = ["pytest>=7.0", "ruff>=0.1"]
 applypilot = "applypilot.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/Pickle-Pixel/ApplyPilot"
-Repository = "https://github.com/Pickle-Pixel/ApplyPilot"
-Issues = "https://github.com/Pickle-Pixel/ApplyPilot/issues"
+Homepage = "https://github.com/CK3thou/jobsauto"
+Repository = "https://github.com/CK3thou/jobsauto"
+Issues = "https://github.com/CK3thou/jobsauto/issues"
 
 [build-system]
 requires = ["hatchling"]
